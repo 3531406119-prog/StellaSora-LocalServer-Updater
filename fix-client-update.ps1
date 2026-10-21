@@ -254,11 +254,32 @@ if ($DryRun) { Info "=== DryRun：只检测，不写文件 ===" }
 New-Item -ItemType Directory -Path $Tmp -Force | Out-Null
 
 # ---------------------------------------------------------------- 4. 下载数据
+# 下载：断点续传 + 失败重试（网络慢也不会卡死半个文件）
 function Download($url, $out) {
     $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    if ($curl) { & curl.exe -sSL --max-time 900 --retry 3 --retry-all-errors -o $out $url; return (Test-Path $out) }
-    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 900
+    if ($curl) {
+        for ($i = 1; $i -le 3; $i++) {
+            & curl.exe -sSL --fail --retry 5 --retry-all-errors --retry-delay 3 -C - --max-time 2400 -o $out $url
+            $code = $LASTEXITCODE
+            if ($code -eq 0) { return $true }
+            Warn ("下载中断（curl 退出码 {0}），第 {1}/3 次重试（已下载部分会保留）..." -f $code, $i)
+            Start-Sleep -Seconds 3
+        }
+        return $false
+    }
+    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -TimeoutSec 2400
     return (Test-Path $out)
+}
+
+# 校验 zip 完整性（避免"下了一半就去解压"的玄学报错）
+function Test-ZipFile($path) {
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $z = [System.IO.Compression.ZipFile]::OpenRead($path)
+        $n = $z.Entries.Count
+        $z.Dispose()
+        return ($n -gt 0)
+    } catch { return $false }
 }
 
 $newBin = $null
@@ -283,6 +304,9 @@ if (-not $SkipData) {
 
     $x = Join-Path $Tmp 'data'
     if (Test-Path $x) { Remove-Item $x -Recurse -Force }
+    if (-not (Test-ZipFile $dataZip)) {
+        Fail ("数据包下载不完整或已损坏（{0:N1} MB，正常约 30 MB）。请重试本脚本；网络差时可稍后再跑。" -f ((Get-Item $dataZip).Length / 1MB))
+    }
     Expand-Archive -LiteralPath $dataZip -DestinationPath $x -Force
     $root = (Get-ChildItem $x -Directory | Select-Object -First 1).FullName
     $base = Join-Path $root $repoRegion
@@ -320,6 +344,9 @@ if (-not $SkipJar) {
     if (-not (Download $signed $zip)) { Fail "nightly 下载失败；可改用 -SkipJar 只换数据，或稍后重试。" }
     $size = (Get-Item $zip).Length
     Info ("nightly 包大小：{0:N1} MB" -f ($size / 1MB))
+    if (-not (Test-ZipFile $zip)) {
+        Fail ("nightly 包下载不完整（{0:N1} MB，正常约 37 MB）。多半是网络/代理太慢不稳；请重试本脚本，或先加 -SkipJar 只换数据。" -f ($size / 1MB))
+    }
     $ex = Join-Path $Tmp 'jar'
     if (Test-Path $ex) { Remove-Item $ex -Recurse -Force }
     Expand-Archive -LiteralPath $zip -DestinationPath $ex -Force
