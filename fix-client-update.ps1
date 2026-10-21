@@ -5,6 +5,7 @@
 .DESCRIPTION
     解决症状：游戏客户端自动更新后，登录能过、但一进主界面就弹
         Network Error -> "Network connection error."（Quit / Retry）
+      或弹 "网络异常 / 101404"
     服务端日志里能同时看到：
         [WARN] Unhandled request: <报文号>
 
@@ -22,10 +23,10 @@
     本地服「包根目录」（里面应有 Server\lib\Nebula.jar）。不填会自动在脚本目录/当前目录附近找。
 
 .PARAMETER ClientDir
-    游戏客户端目录（里面有 Persistent_Store\prefs.dat）。不填会从包根目录的 config.json 里读 game_path。
+    游戏客户端目录（里面有 prefs.dat 与 Persistent_Store）。不填会从包根目录的 config.json 读 game_path。
 
 .PARAMETER Region
-    GLOBAL / CN / JP / KR / TW。不填则读服务端 config.json 的 region（一般就是 GLOBAL）。
+    GLOBAL / CN / JP / KR / TW。不填则读服务端 config.json 的 region。
 
 .PARAMETER SkipJar
     只换数据、不换 jar。
@@ -76,47 +77,114 @@ function Get-PrefsFile($dir) {
     return (Join-Path $dir 'Persistent_Store\prefs.dat')
 }
 
+# 服务端根目录识别：兼容 Server / 服务端 / Nebula / 直接指向 Server 目录
+function Resolve-ServerRoot($p) {
+    if (-not $p) { return $null }
+    $p = $p.TrimEnd('\', '/')
+    foreach ($sub in @('Server', '服务端', 'Nebula', 'server')) {
+        if (Test-Path (Join-Path $p "$sub\lib\Nebula.jar")) { return $p }
+    }
+    if (Test-Path (Join-Path $p 'lib\Nebula.jar')) { return (Split-Path -Parent $p) }
+    return $null
+}
+
+# 检测残留进程（游戏/启动器/服务端/代理/数据库），有就等用户退干净
+function Get-BusyProcesses {
+    $names = @('StellaSora', '启动', 'java', 'mitmdump', 'mongod')
+    $hit = @()
+    foreach ($n in $names) {
+        if (Get-Process -Name $n -ErrorAction SilentlyContinue) { $hit += $n }
+    }
+    return $hit
+}
+function Wait-BusyProcessesExit {
+    for ($try = 1; $try -le 3; $try++) {
+        $hit = Get-BusyProcesses
+        if ($hit.Count -eq 0) { return }
+        Warn ("检测到这些进程还在运行：{0}" -f ($hit -join ', '))
+        if ($try -eq 1) { Warn "请先完全退出游戏和启动器（托盘图标也要右键退出），然后按回车继续。" }
+        Read-Host "退出后按回车" | Out-Null
+    }
+    $hit = Get-BusyProcesses
+    if ($hit.Count -gt 0) {
+        Fail ("还有进程没退出：{0}。请完全关闭它们（含托盘图标）后重新运行本脚本。" -f ($hit -join ', '))
+    }
+}
+
+function Test-DirWritable($dir) {
+    try {
+        $probe = Join-Path $dir ("__write_test_" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".tmp")
+        [IO.File]::WriteAllText($probe, 'x')
+        Remove-Item $probe -Force
+        return $true
+    } catch { return $false }
+}
+
+# 找包内自带的 Java（不同整合包路径不一），并检查是否 21+
+function Get-JavaExe($root) {
+    $cands = @(
+        (Join-Path $root 'Runtime\java\bin\java.exe'),
+        (Join-Path $root 'Server\Runtime\java\bin\java.exe'),
+        (Join-Path $root 'java\bin\java.exe'),
+        (Join-Path $root 'Server\java\bin\java.exe')
+    )
+    foreach ($c in $cands) { if (Test-Path $c) { return $c } }
+    $cmd = Get-Command java.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+function Test-JavaVersion($root) {
+    $java = Get-JavaExe $root
+    if (-not $java) { Warn "没找到 java.exe；请确认整合包自带运行时（Nebula 需要 Java 21+）。"; return }
+    try {
+        $out = & $java -version 2>&1 | Out-String
+        if ($out -match 'version\s+"(\d+)') {
+            $major = [int]$Matches[1]
+            if ($major -lt 21) { Warn ("检测到 Java {0}（{1}），Nebula 新版需要 Java 21+，服务端可能起不来。" -f $major, $java) }
+            else { Info ("Java {0}（{1}）" -f $major, $java) }
+        }
+    } catch { Warn "无法检测 Java 版本（不影响后续步骤）。" }
+}
+
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Tmp = Join-Path $env:TEMP ("stella_update_" + (Get-Date -Format 'yyyyMMdd_HHmmss'))
 $RepoMap = @{ 'GLOBAL' = 'EN'; 'CN' = 'CN'; 'JP' = 'JP'; 'KR' = 'KR'; 'TW' = 'TW' }
 
 # ---------------------------------------------------------------- 1. 定位目录
-function Test-ServerRoot($p) {
-    if (-not $p) { return $false }
-    if (Test-Path (Join-Path $p 'Server\lib\Nebula.jar')) { return $true }
-    return $false
-}
-
-if ($ServerDir -and -not (Test-ServerRoot $ServerDir)) {
-    # 也允许直接传 Server 目录
-    if (Test-Path (Join-Path $ServerDir 'lib\Nebula.jar')) { $ServerDir = Split-Path -Parent $ServerDir }
-    else { Fail "在 '$ServerDir' 下没找到 Server\lib\Nebula.jar，请用 -ServerDir 指向本地服包根目录。" }
-}
-
-if (-not $ServerDir) {
-    function Test-PrefsFile($dir) {
-    if (-not $dir) { return $false }
-    if (Test-Path (Join-Path $dir 'prefs.dat')) { return $true }
-    if (Test-Path (Join-Path $dir 'Persistent_Store\prefs.dat')) { return $true }
-    return $false
-}
-function Get-PrefsFile($dir) {
-    $a = Join-Path $dir 'prefs.dat'
-    if (Test-Path $a) { return $a }
-    return (Join-Path $dir 'Persistent_Store\prefs.dat')
-}
-
-$cands = @($ScriptRoot, (Split-Path -Parent $ScriptRoot), (Get-Location).Path)
-    foreach ($c in $cands) { if (Test-ServerRoot $c) { $ServerDir = $c; break } }
+if ($ServerDir) {
+    $r = Resolve-ServerRoot $ServerDir
+    if (-not $r) { Fail "在 '$ServerDir' 下没找到 *\lib\Nebula.jar，请指向本地服包根目录（例如 D:\Stella Sora）。" }
+    $ServerDir = $r
 }
 if (-not $ServerDir) {
-    $typed = Read-Host "请输入本地服包根目录（例如 D:\Stella Sora）"
-    if (-not (Test-ServerRoot $typed)) { Fail "路径无效：$typed" }
-    $ServerDir = $typed
+    foreach ($c in @($ScriptRoot, (Split-Path -Parent $ScriptRoot), (Get-Location).Path)) {
+        $r = Resolve-ServerRoot $c
+        if ($r) { $ServerDir = $r; break }
+    }
+}
+if (-not $ServerDir) {
+    for ($t = 1; $t -le 3; $t++) {
+        $typed = Read-Host "请输入本地服包根目录（例如 D:\Stella Sora）"
+        $r = Resolve-ServerRoot $typed
+        if ($r) { $ServerDir = $r; break }
+        Warn "这个路径下没找到 *\lib\Nebula.jar，再试一次。"
+    }
+    if (-not $ServerDir) { Fail "没能确定本地服目录，已退出。" }
 }
 $ServerDir = (Resolve-Path $ServerDir).Path
 $ServerSub = Join-Path $ServerDir 'Server'
 Info "本地服包根目录：$ServerDir"
+
+# 预检：目录可写 / 进程已退干净
+if (-not (Test-DirWritable $ServerDir)) {
+    Fail "没有写入权限：$ServerDir。请右键以管理员身份运行，或把整合包移到非系统盘目录。"
+}
+if ($DryRun) {
+    $busy = Get-BusyProcesses
+    if ($busy.Count -gt 0) { Warn ("（DryRun）检测到进程还在运行：{0}；正式运行前必须先全部退出。" -f ($busy -join ', ')) }
+} else {
+    Wait-BusyProcessesExit
+}
 
 # ---------------------------------------------------------------- 2. 定位客户端 & 读版本
 $pkgConfig = Join-Path $ServerDir 'config.json'
@@ -127,19 +195,18 @@ if (-not $ClientDir -and (Test-Path $pkgConfig)) {
     } catch { }
 }
 if ($ClientDir -and -not (Test-PrefsFile $ClientDir)) {
-    Warn "在 '$ClientDir' 下没看到 Persistent_Store\prefs.dat，改为自动探测。"
+    Warn "在 '$ClientDir' 下没看到 prefs.dat，改为自动探测。"
     $ClientDir = $null
 }
 if (-not $ClientDir) {
-    $typed = Read-Host "请输入游戏客户端目录（例如 D:\YostarGames\StellaSora_EN；留空则跳到手动指定版本）"
-    if ($typed -and (Test-Path (Join-Path $typed 'Persistent_Store\prefs.dat'))) { $ClientDir = (Resolve-Path $typed).Path }
+    $typed = Read-Host "请输入游戏客户端目录（例如 D:\YostarGames\StellaSora_EN；直接回车则手动输入版本号）"
+    if ($typed -and (Test-PrefsFile $typed)) { $ClientDir = (Resolve-Path $typed).Path }
 }
 
 $ClientDataVersion = $null
 $ClientGameVersion = $null
 if ($ClientDir) {
-    $prefs = Get-PrefsFile $ClientDir
-    $txt = Get-Content $prefs -Raw -Encoding UTF8
+    $txt = Get-Content (Get-PrefsFile $ClientDir) -Raw -Encoding UTF8
     $m1 = [regex]::Match($txt, 'LOCAL_SERVER_RESOURCE_VERSION\s*:\s*(\d+)')
     $m2 = [regex]::Match($txt, 'LOCAL_GAME_VERSION\s*:\s*([0-9\.]+)')
     if ($m1.Success) { $ClientDataVersion = [int]$m1.Groups[1].Value }
@@ -159,7 +226,7 @@ if ($ClientDir) {
     }
 }
 if (-not $ClientDataVersion) {
-    $typed = Read-Host "没能自动读到客户端数据版本，请手动输入（游戏登录界面左上角版本号最后一段，例如 2.0.0.143 → 143）"
+    $typed = Read-Host "没能自动读到客户端数据版本，请手动输入（游戏登录界面左上角版本号最后一段，例如 2.0.0.144 → 144）"
     if ($typed -match '^\d+$') { $ClientDataVersion = [int]$typed } else { Fail "版本号无效：$typed" }
 }
 
@@ -177,6 +244,7 @@ if (-not $Region) { $Region = $curRegion }
 $repoRegion = $RepoMap[$Region.ToUpper()]
 if (-not $repoRegion) { Fail "区服 '$Region' 不支持（可用：GLOBAL/CN/JP/KR/TW）" }
 Info ("区服：{0}（数据仓库目录 {1}）；服务端当前自定义数据版本：{2}" -f $Region, $repoRegion, $curVersion)
+Test-JavaVersion $ServerDir
 
 if ($DryRun) { Info "=== DryRun：只检测，不写文件 ===" }
 
@@ -278,6 +346,7 @@ if (Test-Path (Join-Path $ServerSub 'Resources\bin'))      { Compress-Archive -P
 if (Test-Path (Join-Path $ServerSub 'Resources\language')) { Compress-Archive -Path (Join-Path $ServerSub 'Resources\language') -DestinationPath (Join-Path $bak 'Resources_language.zip') -Force }
 if (-not $SkipDatabaseBackup) {
     $db = Join-Path $ServerDir '存档\Database'
+    if (-not (Test-Path $db)) { $db = Join-Path $ServerDir 'Database' }
     if (Test-Path $db) {
         Info "备份存档（可能较慢）..."
         Compress-Archive -Path (Join-Path $db '*') -DestinationPath (Join-Path $bak 'Database.zip') -Force
@@ -317,7 +386,7 @@ Write-Host ""
 Ok "全部完成。接下来："
 Write-Host "  1) 用启动器重新启动游戏（先确保上次的进程都退干净了）"
 Write-Host "  2) 看服务端日志 Server\logs\latest.log，应该出现："
-Write-Host "       Game version: <客户端版本>.<自定义数据版本> (GLOBAL)" -ForegroundColor DarkGray
+Write-Host ("       Game version: {0}.{1} (GLOBAL)" -f ($(if ($ClientGameVersion) { $ClientGameVersion } else { '<客户端版本>' })), $ClientDataVersion) -ForegroundColor DarkGray
 Write-Host "       Loaded N GachaDefs." -ForegroundColor DarkGray
 Write-Host "     并且不再反复出现 [WARN] Unhandled request: xxx" -ForegroundColor DarkGray
 Write-Host "  3) 回滚：把备份目录里的 Nebula.jar / 两份 config 复制回去，" -ForegroundColor DarkGray
@@ -328,6 +397,6 @@ if ($newBin) {
     $gNew = Join-Path $newBin 'Gacha.json'
     if (Test-Path $gNew) {
         $cnt = (Get-Content $gNew -Raw -Encoding UTF8 | ConvertFrom-Json).PSObject.Properties.Name.Count
-        if ($ClientDataVersion -and $Region -eq 'GLOBAL') { Warn "数据仓库有时会比客户端落后 1~2 个版本；当前客户端数据版本 $ClientDataVersion，本次数据卡池 $cnt 条，若个别新内容缺失，等仓库更新后重跑本脚本即可。" }
+        Warn ("数据仓库与客户端版本偶尔会差半天到一天（本次客户端数据版本 {0}，数据卡池 {1} 条）；若个别新内容缺失，等仓库更新后重跑本脚本即可。" -f $ClientDataVersion, $cnt)
     }
 }
