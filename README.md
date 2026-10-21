@@ -140,7 +140,29 @@ A：不会。存档在 `存档\Database`（MongoDB），脚本不碰它；而且
 
 ---
 
-## 7. 免责声明
+## 7. 换完还是进不去？症状对照
+
+先记住一条铁律：**客户端每次自动大更新后，都要重跑一次本脚本**。客户端更新很勤（实测一天内从 143 跳到 144），旧 jar 立刻就会重新出现 `Unhandled request`。脚本会自动读取客户端当下的数据版本，所以"重跑"就是正确答案。
+
+| 症状 | 含义 | 怎么办 |
+|---|---|---|
+| 弹 `Network Error` / `Network connection error.`，服务端日志刷 `[WARN] Unhandled request: 8419` | 服务端 jar 落后于客户端协议 | 重跑脚本（重点是换 jar） |
+| 弹 `101404` + 网络异常 / `Network error (101404)` | 版本没对上，或请求打到了不存在的接口（客户端/资源层拿到的 404）。本质仍是**客户端 / 服务端 jar / 数据版本三者不同步** | ①看客户端 `Persistent_Store\prefs.dat` 的 `LOCAL_SERVER_RESOURCE_VERSION`；②看 `Server\config.json` 的 `customDataVersion` 是否等于它；③看服务端日志有没有 `Unhandled request`；④任一不对就重跑脚本 |
+| 弹 `100109` / `100111` / `100112`（Version mismatch / 请更新） | `customDataVersion` 与客户端数据版本不一致 | 重跑脚本，或手动把两份 config 的 `customDataVersion` 改成客户端数据版本 |
+| 能登录，但卡池列表空 / 新功能报错 | 数据仓库还没跟上客户端版本 | 等半天到一天（仓库自动更新），然后重跑脚本 |
+| 服务端启动即退出 / 日志有 `Exception` | jar 与 Java 版本不匹配，或下载不完整 | 确认 `java -version` 是 21+，删掉临时文件重跑脚本 |
+
+**上游还没跟上时**（客户端刚更新、nightly 还没构建）：
+
+- Nebula 有没有新产物：<https://nightly.link/Melledy/Nebula/workflows/gradle/main/Nebula-Nightly.zip>（能下就说明有）
+- 数据仓库对应区服有没有更新：<https://github.com/Hiro420/StellaSoraData/commits/main>
+- 两边都齐了再重跑脚本。一般客户端更新后几小时到一天内会跟上。
+
+**收集日志求助**：`Server\logs\latest.log` 尾部 + 客户端 `%LOCALAPPDATA%Low\YOSTAR (HONG KONG) LIMITED\StellaSora\Player.log` 里含 `Curl error` / `Unhandled` / `LoginURL` 的行 + 弹窗截图。有这三样就能判断是"jar 落后"还是"版本号没对上"。
+
+---
+
+## 8. 免责声明
 
 - 本仓库**只包含脚本与文档**，不包含任何游戏程序、游戏资源或游戏数据；所有内容在运行时从上述公开仓库获取。
 - 仅供学习、研究与自建环境维护使用。请自行确保你拥有相应游戏与数据的合法使用权，并遵守当地法律与游戏服务条款。
@@ -149,7 +171,8 @@ A：不会。存档在 `存档\Database`（MongoDB），脚本不碰它；而且
 
 ---
 
-## 8. 更新日志
+## 9. 更新日志
 
+- `2026-10-21`（第二次实测）：客户端自动更新到 `2.0.0.144`。把服务端还原成"刚更新完"的坏状态（旧 jar + 140 数据）复现了 `Network Error`，再跑本脚本 → 自动读到 144、取到当晚 nightly（git `9271c34`）→ 启动日志 `Game version: 2.0.0.144 (GLOBAL)`、`Loaded 70 GachaDefs`、`Unhandled request` 计数为 0，完美登录。结论：**客户端每次更新后重跑脚本即可**。
 - `2026-10-21`：首个版本。适配客户端 `2.0.0`（数据版本 143）→ 服务端 jar 2026-10-21 nightly + 数据仓库 `EN [141]`；实测修复"进游戏 Network Error"与卡池不可抽。
 - 更早的手工排障记录（1.16.1 / 数据 140 时代）见 README 的历史说明或 issue。
