@@ -52,6 +52,25 @@ LOCAL_SERVER_RESOURCE_VERSION:143
 
 **区服对应**：`GLOBAL→EN`、`CN→CN`、`JP→JP`、`KR→KR`、`TW→TW`（脚本读服务端 `Server\config.json` 的 `region`）。
 
+### ⚠️ 注意：143 版和 144 版不是一回事（2026-10-21 实测）
+
+客户端更新很密，同一天里就能从 143 热更到 144。两个版本要配的服务端也不一样，混用就会重新出现"网络异常"。
+
+| 项 | 143 版 | 144 版 |
+|---|---|---|
+| 客户端 `prefs.dat` 的 `LOCAL_SERVER_RESOURCE_VERSION` | `143` | `144` |
+| 客户端 `LOCAL_BIN_DIFF_PATCH_RESOURCE_VERSION` | `2` | `3`（这次热更下载了约 29 MB） |
+| 两份 config 的 `customDataVersion` | `143` | `144` |
+| 合适的服务端 jar | 10-21 **06:14** 的 nightly | 10-21 **13:00 之后**的 nightly（实测 `9271c34` 在 144 上 `Unhandled request` 计数为 0） |
+| 数据仓库 EN 版本 | 141 | **144**（10-21 12:44 `Auto-Update EN [144]`） |
+| `$GAME_VER`（`ss_win.mani` 头） | `2.0.0` | `2.0.0`（只有最后一段数据版本在变） |
+
+三条要点：
+
+1. **`customDataVersion` 必须精确等于客户端 `prefs.dat` 里的 `LOCAL_SERVER_RESOURCE_VERSION`**。差一个数字就会出现 `100109 / 100111 / 100112`（版本不符）或 `101404 网络异常`。脚本会自动读这个值，不用手填。
+2. **143 时代配的 jar 不要直接用在 144 客户端上** —— 会重新刷 `Unhandled request`。客户端更新后直接重跑脚本，它会拉当天最新的 nightly。
+3. **数据仓库现在跟得很快**（10-21 一天内 EN 从 141 跳到 144），所以"数据落后"基本不是问题了，重跑一次就能对齐。
+
 ---
 
 ## 3. 用法
@@ -173,6 +192,6 @@ A：不会。存档在 `存档\Database`（MongoDB），脚本不碰它；而且
 
 ## 9. 更新日志
 
-- `2026-10-21`（第二次实测）：客户端自动更新到 `2.0.0.144`。把服务端还原成"刚更新完"的坏状态（旧 jar + 140 数据）复现了 `Network Error`，再跑本脚本 → 自动读到 144、取到当晚 nightly（git `9271c34`）→ 启动日志 `Game version: 2.0.0.144 (GLOBAL)`、`Loaded 70 GachaDefs`、`Unhandled request` 计数为 0，完美登录。结论：**客户端每次更新后重跑脚本即可**。
+- `2026-10-21`（第二次实测，144 版）：客户端自动热更到 `2.0.0.144`（`LOCAL_SERVER_RESOURCE_VERSION` 143→144、`LOCAL_BIN_DIFF_PATCH_RESOURCE_VERSION` 2→3，下载约 29 MB）。先把服务端还原成"刚更新完"的坏状态（10-07 旧 jar + 140 数据 + `customDataVersion 140`）复现了 `Network Error` 与 `Unhandled request: 8419`；再跑本脚本 → 自动读到 144、拉取当晚 nightly（git `9271c34`，产物 13:00）与数据仓库当日 `Auto-Update EN [144]` → 启动日志 `Game version: 2.0.0.144 (GLOBAL)`、`Loaded 70 GachaDefs`、`Unhandled request` 计数 **0**，完美登录。结论：**客户端每次更新后重跑脚本即可**；另见第 2 节的「143 版 / 144 版对照」。
 - `2026-10-21`：首个版本。适配客户端 `2.0.0`（数据版本 143）→ 服务端 jar 2026-10-21 nightly + 数据仓库 `EN [141]`；实测修复"进游戏 Network Error"与卡池不可抽。
 - 更早的手工排障记录（1.16.1 / 数据 140 时代）见 README 的历史说明或 issue。
