@@ -137,7 +137,10 @@ function Test-JavaVersion($root) {
     $java = Get-JavaExe $root
     if (-not $java) { Warn "没找到 java.exe；请确认整合包自带运行时（Nebula 需要 Java 21+）。"; return }
     try {
-        $out = & $java -version 2>&1 | Out-String
+        $prevEA = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $out = (& $java -version 2>&1 | Out-String)
+        $ErrorActionPreference = $prevEA
         if ($out -match 'version\s+"(\d+)') {
             $major = [int]$Matches[1]
             if ($major -lt 21) { Warn ("检测到 Java {0}（{1}），Nebula 新版需要 Java 21+，服务端可能起不来。" -f $major, $java) }
