@@ -1,0 +1,12 @@
+# 备份/临时产物
+_update_bak_*/
+*_old_*/
+*.zip
+*.log
+*.7z
+
+# 编辑器
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
