@@ -1,4 +1,11 @@
-# StellaSora 本地服 · 客户端更新修复脚本
+# StellaSora 本地服 · 工具集（客户端更新修复 + 活动任务补丁）
+
+本仓库有两个工具，按需取用：
+
+| 工具 | 解决什么 | 入口 |
+|---|---|---|
+| **① 客户端更新修复** | 客户端自动更新后弹 `Network Error` / `101404`，进不去游戏 | 根目录 `一键更新.cmd` / `fix-client-update.ps1`（就是下面第 0 节开始的教程） |
+| **② 活动任务补丁** | 活动关卡打通了但活动任务永远不完成；灾变防线看不到赛季记录 | [`activity-task-fix/`](activity-task-fix/) 目录（`run.cmd`） |
 
 > 症状：客户端自动更新后，**能登录、但一进主界面就弹 `Network Error` → `Network connection error.`（Quit / Retry）**，点 Retry 也没用。
 >
