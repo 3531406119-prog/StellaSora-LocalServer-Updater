@@ -228,6 +228,7 @@ A：不会。存档在 `存档\Database`（MongoDB），脚本不碰它；而且
 
 ## 9. 更新日志
 
+- `2026-10-22`：新增**工具二** [`activity-task-fix/`](activity-task-fix/)——活动任务进度补丁（把 `TaskActivity` 的 `curProgress` 补满 + 用 GM 邮件补发奖励）。起因：活动关卡通关后任务永远显示未完成（模拟器只建任务条目不写进度、也没有 `ActivityTaskRewardReceive` 处理器），灾变防线的赛季排行同理未实现。已在本机实测（60 个任务补满、13 种奖励邮件到账）。
 - `2026-10-21`（第二次实测，144 版）：客户端自动热更到 `2.0.0.144`（`LOCAL_SERVER_RESOURCE_VERSION` 143→144、`LOCAL_BIN_DIFF_PATCH_RESOURCE_VERSION` 2→3，下载约 29 MB）。先把服务端还原成"刚更新完"的坏状态（10-07 旧 jar + 140 数据 + `customDataVersion 140`）复现了 `Network Error` 与 `Unhandled request: 8419`；再跑本脚本 → 自动读到 144、拉取当晚 nightly（git `9271c34`，产物 13:00）与数据仓库当日 `Auto-Update EN [144]` → 启动日志 `Game version: 2.0.0.144 (GLOBAL)`、`Loaded 70 GachaDefs`、`Unhandled request` 计数 **0**，完美登录。结论：**客户端每次更新后重跑脚本即可**；另见第 2 节的「143 版 / 144 版对照」。
 - `2026-10-21`：首个版本。适配客户端 `2.0.0`（数据版本 143）→ 服务端 jar 2026-10-21 nightly + 数据仓库 `EN [141]`；实测修复"进游戏 Network Error"与卡池不可抽。
 - 更早的手工排障记录（1.16.1 / 数据 140 时代）见 README 的历史说明或 issue。
